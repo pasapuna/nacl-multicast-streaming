@@ -76,7 +76,7 @@ void AudioEncoder::GetEncodedFrame(EncoderEncodedCb cb) {
 void AudioEncoder::EncoderPauseDestructor() {
   uint32_t ret = thread_loop_.PostQuit(PP_TRUE);
   encoder_thread_.join();
-  video_encoder_.Close();
+  audio_encoder_.Close();
   DINF() << "Pausing encoder thread: " << ret;
   is_initialized_ = false;
 }
@@ -138,7 +138,7 @@ void AudioEncoder::FlushEncodedFrames() {
   encoded_cb_ = nullptr;
 }
 
-void Audio::ThreadInitialize() {
+void AudioEncoder::ThreadInitialize() {
   DINF() << "Thread starting.";
   thread_loop_.AttachToCurrentThread();
 
@@ -146,7 +146,7 @@ void Audio::ThreadInitialize() {
 
   audio_encoder_ = pp::AudioEncoder(instance_);
 
-  video_encoder_.Initialize(2, PP_AUDIOBUFFER_SAMPLERATE_48000,
+  audio_encoder_.Initialize(2, PP_AUDIOBUFFER_SAMPLERATE_48000,
     PP_AUDIOBUFFER_SAMPLESIZE_16_BITS, PP_AUDIOPROFILE_OPUS,
     config_.initial_bitrate, PP_HARDWAREACCELERATION_WITHFALLBACK, cc);
   );
