@@ -148,10 +148,144 @@ void AudioEncoder::ThreadInitialize() {
 
   audio_encoder_.Initialize(2, PP_AUDIOBUFFER_SAMPLERATE_48000,
     PP_AUDIOBUFFER_SAMPLESIZE_16_BITS, PP_AUDIOPROFILE_OPUS,
-    config_.initial_bitrate, PP_HARDWAREACCELERATION_WITHFALLBACK, cc);
+    config_.initial_bitrate * 1000, PP_HARDWAREACCELERATION_WITHFALLBACK, cc);
   );
 
   thread_loop_.Run();
 
   DINF() << "Thread finalizing.";
 }
+
+void AudioEncoder::ThreadInitialized(int32_t result) {
+  auto cc = factory_.NewCallback(&AudioEncoder::InitializedThread);
+
+  if (result != PP_OK) {
+    ERR() << "Could not initialize AudioEncoder:" << result;
+    pp::Module::Get()->core()->CallOnMainThread(0, cc, PP_ERROR_FAILED);
+    return;
+  }
+
+  if (audio_encoder_.GetFrameCodedSize(&encoder_size_) != PP_OK) {
+    ERR() << "Could not get Frame Coded Size.";
+    pp::Module::Get()->core()->CallOnMainThread(0, cc, PP_ERROR_FAILED);
+    return;
+  }
+
+  DINF() << "Audio encoder thread initialized.";
+  pp::Module::Get()->core()->CallOnMainThread(0, cc, PP_OK);
+
+  auto bitstream_cb = factory_.NewCallbackWithOutput(
+      &AudioEncoder::ThreadOnBitstreamBufferReceived);
+  audio_encoder_.GetBitstreamBuffer(bitstream_cb);
+}
+
+void AudioEncoder::ThreadOnBitstreamBufferReceived(int32_t result,
+                                                   PP_BitstreamBuffer buffer) {
+  if (result == PP_ERROR_ABORTED) return;
+
+  if (result != PP_OK) {
+    ERR() << "Could not get bitstream buffer: " << result;
+    return;
+  }
+
+  auto encoded_frame = ThreadBitstreamToEncodedFrame(buffer);
+  if (encoded_frame) {
+    auto encoded_main_cb =
+        factory_.NewCallback(&AudioEncoder::OnEncodedFrame, encoded_frame);
+    pp::Module::Get()->core()->CallOnMainThread(0, encoded_main_cb, PP_OK);
+  }
+
+  audio_encoder_.RecycleBitstreamBuffer(buffer);
+
+  auto bitstream_cb = factory_.NewCallbackWithOutput(
+      &AudioEncoder::ThreadOnBitstreamBufferReceived);
+  audio_encoder_.GetBitstreamBuffer(bitstream_cb);
+}
+
+std::shared_ptr<EncodedFrame> AudioEncoder::ThreadBitstreamToEncodedFrame(
+    PP_BitstreamBuffer buffer) {
+  auto frame = std::make_shared<EncodedFrame>();
+  frame->frame_id = ++last_encoded_frame_id_;
+  if (buffer.key_frame) {
+    frame->dependency = EncodedFrame::KEY;
+    frame->referenced_frame_id = frame->frame_id;
+  } else {
+    frame->dependency = EncodedFrame::DEPENDENT;
+    frame->referenced_frame_id = frame->frame_id - 1;
+  }
+
+  frame->rtp_timestamp =
+      PP_TimeDeltaToRtpDelta(last_timestamp_, kVideoFrequency);
+  frame->reference_time = last_reference_time_;
+  frame->data.clear();
+  frame->data.reserve(buffer.size);
+  frame->data.insert(0, static_cast<char*>(buffer.buffer), buffer.size);
+
+  return frame;
+}
+
+void AudioEncoder::ThreadEncode(int32_t result) {
+  /* DINF() << "Request to encode frame."; */
+  auto cc = factory_.NewCallbackWithOutput(&AudioEncoder::ThreadOnEncoderFrame,
+                                           current_request_);
+  audio_encoder_.GetBuffer(cc);
+}
+
+void AudioEncoder::ThreadInformFrameRelease(int32_t result) {
+  auto cc = factory_.NewCallback(&AudioEncoder::OnFrameReleased);
+  pp::Module::Get()->core()->CallOnMainThread(0, cc, result);
+}
+
+void AudioEncoder::ThreadOnEncoderFrame(int32_t result,
+                                        pp::AudioBuffer encoder_buffer,
+                                        Request req) {
+  if (result == PP_ERROR_ABORTED) {
+    ThreadInformFrameRelease(result);
+    return;
+  }
+
+  if (result != PP_OK) {
+    ERR() << "Could not get frame from encoder: " << result;
+    ThreadInformFrameRelease(result);
+    return;
+  }
+
+  // TODO: Check for frame size
+
+  if (ThreadCopyAudioBuffer(encoder_buffer, req.frame) == PP_OK) {
+    PP_TimeDelta timestamp = req.frame.GetTimestamp();
+
+    last_timestamp_ = timestamp;
+    last_reference_time_ = req.reference_time;
+    auto cc =
+        factory_.NewCallback(&AudioEncoder::ThreadOnEncodeDone, timestamp, req);
+    audio_encoder_.Encode(encoder_buffer, PP_FALSE, cc);
+  }
+
+  ThreadInformFrameRelease(PP_OK);
+}
+
+int32_t AudioEncoder::ThreadCopyAudioBuffer(pp::AudioBuffer dst,
+                                            pp::AudioBuffer src) {
+  if (dst.GetDataBufferSize() < src.GetDataBufferSize()) {
+    ERR() << "Incorrect destination audio buffer size: "
+          << dst.GetDataBufferSize() << " < " << src.GetDataBufferSize();
+    return PP_ERROR_FAILED;
+  }
+
+  dst.SetTimestamp(src.GetTimestamp());
+  memcpy(dst.GetDataBuffer(), src.GetDataBuffer(), src.GetDataBufferSize());
+  return PP_OK;
+}
+
+void AudioEncoder::ThreadOnEncodeDone(int32_t result, PP_TimeDelta timestamp,
+                                      Request req) {
+  if (result == PP_ERROR_ABORTED) return;
+
+  if (result != PP_OK) {
+    ERR() << "Encode failed: " << result;
+    return;
+  }
+}
+
+}  // namespace sharer

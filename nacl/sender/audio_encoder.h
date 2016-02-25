@@ -25,6 +25,7 @@ class AudioEncoder {
   using EncoderReleaseCb = std::function<void(pp::AudioBuffer audio_buffer)>;
   using EncoderEncodedCb =
       std::function<void(bool success, std::shared_ptr<EncodedFrame> frame)>;
+
   explicit AudioEncoder(pp:Instance* instance, const SenderConfig& config,
                         AudioEncoderInitializedCb cb);
 
@@ -34,6 +35,7 @@ class AudioEncoder {
   void FlushEncodedFrames();
   void Stop();
   void ChangeEncoding(const SenderConfig& config);
+
  private:
   struct Request {
     pp::AudioBuffer audio_buffer;
@@ -52,6 +54,16 @@ class AudioEncoder {
   void ThreadInitialize();
   void ThreadInitialized(int32_t result);
   void ThreadEncode(int32_t result);
+  void ThreadInformFrameRelease(int32_t result);
+  void ThreadOnEncoderFrame(int32_t result, pp::VideoFrame encoder_frame,
+                            Request req);
+  int32_t ThreadCopyVideoFrame(pp::VideoFrame dest, pp::VideoFrame src);
+  void ThreadOnBitstreamBufferReceived(int32_t result,
+                                       PP_BitstreamBuffer buffer);
+  std::shared_ptr<EncodedFrame> PauseStreamToEncodedFrame();
+  std::shared_ptr<EncodedFrame> ThreadBitstreamToEncodedFrame(
+      PP_BitstreamBuffer buffer);
+  void ThreadOnEncodeDone(int32_t result, PP_TimeDelta timestamp, Request req);
 
   pp::Instance* instance;
   pp::CompletionCallbackFactory<AudioEncoder> factory_;
@@ -60,6 +72,7 @@ class AudioEncoder {
 
   std::queue<Request> requests_;
   Request current_request_;
+  EncoderEncodedCb encoded_cb_;
 
   std::queue<std::shared_ptr<EncodedFrame>> encoded_audio_buffers_;
 
