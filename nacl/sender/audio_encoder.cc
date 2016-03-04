@@ -44,9 +44,9 @@ void AudioEncoder::InitializedThread(int32_t result) {
   EncodeOneFrame();
 }
 
-void AudioEncoder::EncodeFrame(pp::AudioBuffer audio_buffer,
-                               const base::TimeTicks& reference_time,
-                               EncoderReleaseCb cb) {
+void AudioEncoder::EncodeBuffer(pp::AudioBuffer audio_buffer,
+                                const base::TimeTicks& reference_time,
+                                EncoderReleaseCb cb) {
   Request req;
   req.audio_buffer = audio_buffer;
   req.callback = cb;
@@ -252,8 +252,8 @@ void AudioEncoder::ThreadOnEncoderFrame(int32_t result,
 
   // TODO: Check for frame size
 
-  if (ThreadCopyAudioBuffer(encoder_buffer, req.frame) == PP_OK) {
-    PP_TimeDelta timestamp = req.frame.GetTimestamp();
+  if (ThreadCopyAudioBuffer(encoder_buffer, req.audio_buffer) == PP_OK) {
+    PP_TimeDelta timestamp = req.audio_buffer.GetTimestamp();
 
     last_timestamp_ = timestamp;
     last_reference_time_ = req.reference_time;

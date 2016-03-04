@@ -21,16 +21,22 @@ struct SenderConfig;
 
 class AudioEncoder {
  public:
-  using AudioEncoderInitializedCb = std::function<void(bool result)>;
-  using EncoderReleaseCb = std::function<void(pp::AudioBuffer audio_buffer)>;
-  using EncoderEncodedCb =
-      std::function<void(bool success, std::shared_ptr<EncodedFrame> frame)>;
+   using AudioEncoderInitializedCb = std::function<void(bool result)>;
+   using EncoderReleaseCb = std::function<void(pp::AudioBuffer audio_buffer)>;
+   using EncoderEncodedCb =
+       std::function<void(bool success, std::shared_ptr<EncodedFrame> frame)>;
 
   explicit AudioEncoder(pp:Instance* instance, const SenderConfig& config,
                         AudioEncoderInitializedCb cb);
 
-  void EncodeFrame(pp::AudioBuffer audio_buffer,
-    const base::TimeTicks& timestamp, EncoderReleaseCb cb);
+  const PP_MediaStreamAudioTrack_Attrib buffers() { return num_buffers_; }
+  const PP_MediaStreamAudioTrack_Attrib sampleRate() { return sample_rate_; }
+  const PP_MediaStreamAudioTrack_Attrib sampleSize() { return sample_size_; }
+  const PP_MediaStreamAudioTrack_Attrib channels() { return channels_; }
+  const PP_MediaStreamAudioTrack_Attrib duration() { return duration_; }
+
+  void EncodeBuffer(pp::AudioBuffer audio_buffer,
+                    const base::TimeTicks& timestamp, EncoderReleaseCb cb);
   void GetEncodedFrame(EncoderEncodedCb cb);
   void FlushEncodedFrames();
   void Stop();
@@ -57,7 +63,7 @@ class AudioEncoder {
   void ThreadInformFrameRelease(int32_t result);
   void ThreadOnEncoderFrame(int32_t result, pp::VideoFrame encoder_frame,
                             Request req);
-  int32_t ThreadCopyVideoFrame(pp::VideoFrame dest, pp::VideoFrame src);
+  int32_t ThreadCopyAudioBuffer(pp::AudioBuffer dest, pp::AudioBuffer src);
   void ThreadOnBitstreamBufferReceived(int32_t result,
                                        PP_BitstreamBuffer buffer);
   std::shared_ptr<EncodedFrame> PauseStreamToEncodedFrame();
@@ -70,11 +76,17 @@ class AudioEncoder {
   AudioEncoderInitializedCb initialized_cb_;
   SenderConfig config_;
 
+  PP_MediaStreamAudioTrack_Attrib num_buffers_;
+  PP_MediaStreamAudioTrack_Attrib sample_rate_;
+  PP_MediaStreamAudioTrack_Attrib sample_size_;
+  PP_MediaStreamAudioTrack_Attrib channels_;
+  PP_MediaStreamAudioTrack_Attrib duration_;
+
   std::queue<Request> requests_;
   Request current_request_;
   EncoderEncodedCb encoded_cb_;
 
-  std::queue<std::shared_ptr<EncodedFrame>> encoded_audio_buffers_;
+  std::queue<std::shared_ptr<EncodedFrame>> encoded_frames_;
 
   pp::MessageLoop thread_loop_;
   std::thread encoder_thread_;
